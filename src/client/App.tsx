@@ -334,7 +334,7 @@ function ClusterForm({
       <Form.Item name="password" label="密码">
         <Input.Password placeholder={record ? "留空保持原密码" : undefined} />
       </Form.Item>
-      <Space>
+      <Space className="form-actions">
         <Button onClick={onCancel}>取消</Button>
         <Button onClick={() => void testCurrent()} loading={testing}>
           测试
@@ -435,7 +435,7 @@ function SyncerForm({
       <Form.Item name="port" label="HTTP Port" rules={[{ required: true }]}>
         <InputNumber min={1} max={65535} style={{ width: "100%" }} />
       </Form.Item>
-      <Space>
+      <Space className="form-actions">
         <Button onClick={onCancel}>取消</Button>
         <Button onClick={() => void testCurrent()} loading={testing}>
           测试
@@ -562,7 +562,7 @@ function JobForm({
           </Form.Item>
         </Space.Compact>
       )}
-      <Space>
+      <Space className="form-actions">
         <Button onClick={onCancel}>取消</Button>
         <Button htmlType="submit" type="primary">
           创建

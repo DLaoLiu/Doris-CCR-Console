@@ -9,6 +9,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ConfigProvider
       locale={zhCN}
+      button={{ autoInsertSpace: false }}
       theme={{
         token: {
           colorPrimary: "#007aff",
@@ -19,13 +20,13 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           colorText: "#1d1d1f",
           colorTextSecondary: "#6e6e73",
           colorBgLayout: "#f5f5f7",
-          colorBgContainer: "rgba(255, 255, 255, 0.82)",
+          colorBgContainer: "rgba(255, 255, 255, 0.88)",
           colorBorder: "rgba(60, 60, 67, 0.18)",
           borderRadius: 8,
           fontFamily:
             "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
           controlHeight: 34,
-          boxShadow: "0 10px 30px rgba(0, 0, 0, 0.08)"
+          boxShadow: "0 8px 24px rgba(0, 0, 0, 0.06)"
         },
         components: {
           Button: {
@@ -49,7 +50,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             optionSelectedBg: "rgba(0, 122, 255, 0.12)"
           },
           Table: {
-            headerBg: "rgba(242, 242, 247, 0.86)",
+            headerBg: "rgba(248, 248, 250, 0.92)",
             headerColor: "#6e6e73",
             rowHoverBg: "rgba(0, 122, 255, 0.06)"
           },

@@ -14,9 +14,9 @@
   --ios-fill: rgba(120, 120, 128, 0.12);
   --ios-fill-strong: rgba(120, 120, 128, 0.2);
   --ios-border: rgba(60, 60, 67, 0.16);
-  --ios-surface: rgba(255, 255, 255, 0.78);
-  --ios-surface-strong: rgba(255, 255, 255, 0.92);
-  --ios-shadow: 0 18px 50px rgba(0, 0, 0, 0.08);
+  --ios-surface: rgba(255, 255, 255, 0.86);
+  --ios-surface-strong: rgba(255, 255, 255, 0.94);
+  --ios-shadow: 0 10px 28px rgba(0, 0, 0, 0.055);
 }
 
 html,
@@ -42,9 +42,9 @@ body {
 
 .app-sider {
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.64) !important;
+  background: rgba(251, 251, 253, 0.72) !important;
   border-right: 1px solid var(--ios-border);
-  box-shadow: 18px 0 45px rgba(0, 0, 0, 0.05);
+  box-shadow: 10px 0 32px rgba(0, 0, 0, 0.035);
   backdrop-filter: blur(28px) saturate(180%);
 }
 
@@ -53,6 +53,7 @@ body {
   display: flex;
   align-items: center;
   padding: 0 18px;
+  gap: 10px;
   color: var(--ios-text);
   font-weight: 700;
   font-size: 16px;
@@ -60,9 +61,24 @@ body {
   border-bottom: 1px solid rgba(60, 60, 67, 0.1);
 }
 
+.brand::before {
+  content: "";
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.55) 1px, transparent 1px) 8px 7px / 7px 14px no-repeat,
+    linear-gradient(0deg, rgba(255, 255, 255, 0.75) 1px, transparent 1px) 7px 8px / 14px 7px no-repeat,
+    linear-gradient(180deg, #32ade6 0%, var(--ios-blue) 100%);
+  box-shadow: 0 8px 18px rgba(0, 122, 255, 0.24);
+}
+
 .content {
   min-width: 0;
-  padding: 24px;
+  padding: 28px;
 }
 
 .page-title {
@@ -79,7 +95,7 @@ body {
   gap: 12px;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
   flex-wrap: wrap;
 }
 
@@ -137,7 +153,7 @@ body {
 
 .ant-menu-light .ant-menu-item {
   width: calc(100% - 20px);
-  height: 38px;
+  height: 40px;
   margin: 4px 10px;
   border-radius: 8px;
   color: var(--ios-secondary);
@@ -160,6 +176,7 @@ body {
   border-radius: 8px;
   background: var(--ios-surface-strong);
   box-shadow: var(--ios-shadow);
+  backdrop-filter: blur(20px) saturate(180%);
 }
 
 .panel .ant-table-wrapper {
@@ -173,16 +190,21 @@ body {
 }
 
 .ant-table-thead > tr > th {
+  padding-top: 14px !important;
+  padding-bottom: 14px !important;
   font-size: 12px;
   font-weight: 700 !important;
 }
 
 .ant-table-tbody > tr > td {
+  padding-top: 16px !important;
+  padding-bottom: 16px !important;
   border-bottom-color: rgba(60, 60, 67, 0.1) !important;
 }
 
 .ant-btn {
   font-weight: 650;
+  letter-spacing: 0;
 }
 
 .ant-btn:not(.ant-btn-primary) {
@@ -221,6 +243,12 @@ body {
 .ant-tag {
   border-radius: 8px;
   font-weight: 650;
+}
+
+.form-actions {
+  width: 100%;
+  justify-content: flex-end;
+  padding-top: 6px;
 }
 
 @media (max-width: 760px) {
