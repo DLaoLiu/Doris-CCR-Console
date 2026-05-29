@@ -1,6 +1,7 @@
 {
   "name": "doris-ccr-console",
   "version": "0.1.0",
+  "description": "A lightweight web console for managing Apache Doris CCR Syncer jobs.",
   "private": true,
   "type": "module",
   "scripts": {
