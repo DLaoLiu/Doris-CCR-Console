@@ -109,7 +109,7 @@ export default function App() {
     <Layout className="app-shell">
       <Sider className="app-sider" width={210}>
         <div className="brand">Doris CCR Console</div>
-        <Menu theme="dark" mode="inline" selectedKeys={[page]} items={menuItems} onClick={(item) => setPage(item.key as PageKey)} />
+        <Menu theme="light" mode="inline" selectedKeys={[page]} items={menuItems} onClick={(item) => setPage(item.key as PageKey)} />
       </Sider>
       <Content className="content">
         {page === "dashboard" && <Dashboard dashboard={dashboard} syncers={syncers} jobs={jobs} onRefresh={refreshAll} loading={loading} />}
