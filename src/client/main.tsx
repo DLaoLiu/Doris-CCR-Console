@@ -12,16 +12,16 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       button={{ autoInsertSpace: false }}
       theme={{
         token: {
-          colorPrimary: "#007aff",
-          colorInfo: "#007aff",
-          colorSuccess: "#34c759",
+          colorPrimary: "#0a84ff",
+          colorInfo: "#0a84ff",
+          colorSuccess: "#1fb6a6",
           colorWarning: "#ff9500",
           colorError: "#ff3b30",
-          colorText: "#1d1d1f",
-          colorTextSecondary: "#6e6e73",
-          colorBgLayout: "#f5f5f7",
+          colorText: "#172026",
+          colorTextSecondary: "#69757f",
+          colorBgLayout: "#eef3f6",
           colorBgContainer: "rgba(255, 255, 255, 0.88)",
-          colorBorder: "rgba(60, 60, 67, 0.18)",
+          colorBorder: "rgba(47, 67, 80, 0.16)",
           borderRadius: 8,
           fontFamily:
             "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
@@ -39,20 +39,20 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           },
           Input: {
             borderRadius: 8,
-            activeShadow: "0 0 0 3px rgba(0, 122, 255, 0.14)"
+            activeShadow: "0 0 0 3px rgba(10, 132, 255, 0.14)"
           },
           InputNumber: {
             borderRadius: 8,
-            activeShadow: "0 0 0 3px rgba(0, 122, 255, 0.14)"
+            activeShadow: "0 0 0 3px rgba(10, 132, 255, 0.14)"
           },
           Select: {
             borderRadius: 8,
-            optionSelectedBg: "rgba(0, 122, 255, 0.12)"
+            optionSelectedBg: "rgba(10, 132, 255, 0.12)"
           },
           Table: {
             headerBg: "rgba(248, 248, 250, 0.92)",
             headerColor: "#6e6e73",
-            rowHoverBg: "rgba(0, 122, 255, 0.06)"
+            rowHoverBg: "rgba(31, 182, 166, 0.07)"
           },
           Modal: {
             borderRadiusLG: 8

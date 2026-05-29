@@ -4,19 +4,20 @@
 
 :root {
   color-scheme: light;
-  --ios-blue: #007aff;
-  --ios-green: #34c759;
+  --ios-blue: #0a84ff;
+  --ios-aqua: #1fb6a6;
+  --ios-green: #30d158;
   --ios-orange: #ff9500;
   --ios-red: #ff3b30;
-  --ios-text: #1d1d1f;
-  --ios-secondary: #6e6e73;
-  --ios-tertiary: #8e8e93;
-  --ios-fill: rgba(120, 120, 128, 0.12);
-  --ios-fill-strong: rgba(120, 120, 128, 0.2);
-  --ios-border: rgba(60, 60, 67, 0.16);
-  --ios-surface: rgba(255, 255, 255, 0.86);
+  --ios-text: #172026;
+  --ios-secondary: #69757f;
+  --ios-tertiary: #8a98a3;
+  --ios-fill: rgba(68, 84, 96, 0.1);
+  --ios-fill-strong: rgba(68, 84, 96, 0.18);
+  --ios-border: rgba(47, 67, 80, 0.15);
+  --ios-surface: rgba(255, 255, 255, 0.84);
   --ios-surface-strong: rgba(255, 255, 255, 0.94);
-  --ios-shadow: 0 10px 28px rgba(0, 0, 0, 0.055);
+  --ios-shadow: 0 12px 30px rgba(30, 52, 66, 0.07);
 }
 
 html,
@@ -31,7 +32,8 @@ body {
   font-family:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC",
     "Microsoft YaHei", sans-serif;
-  background: #f5f5f7;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(238, 243, 246, 0.92) 46%, #e9eff3 100%);
   letter-spacing: 0;
 }
 
@@ -42,9 +44,9 @@ body {
 
 .app-sider {
   overflow: hidden;
-  background: rgba(251, 251, 253, 0.72) !important;
+  background: rgba(245, 249, 251, 0.78) !important;
   border-right: 1px solid var(--ios-border);
-  box-shadow: 10px 0 32px rgba(0, 0, 0, 0.035);
+  box-shadow: 10px 0 32px rgba(30, 52, 66, 0.055);
   backdrop-filter: blur(28px) saturate(180%);
 }
 
@@ -58,7 +60,7 @@ body {
   font-weight: 700;
   font-size: 16px;
   letter-spacing: 0;
-  border-bottom: 1px solid rgba(60, 60, 67, 0.1);
+  border-bottom: 1px solid rgba(47, 67, 80, 0.1);
 }
 
 .brand::before {
@@ -72,8 +74,8 @@ body {
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.55) 1px, transparent 1px) 8px 7px / 7px 14px no-repeat,
     linear-gradient(0deg, rgba(255, 255, 255, 0.75) 1px, transparent 1px) 7px 8px / 14px 7px no-repeat,
-    linear-gradient(180deg, #32ade6 0%, var(--ios-blue) 100%);
-  box-shadow: 0 8px 18px rgba(0, 122, 255, 0.24);
+    linear-gradient(160deg, #54d8c8 0%, var(--ios-blue) 100%);
+  box-shadow: 0 8px 18px rgba(31, 182, 166, 0.24);
 }
 
 .content {
@@ -161,13 +163,13 @@ body {
 }
 
 .ant-menu-light .ant-menu-item-selected {
-  color: var(--ios-blue);
-  background: rgba(0, 122, 255, 0.12);
+  color: #066ad8;
+  background: linear-gradient(90deg, rgba(10, 132, 255, 0.13), rgba(31, 182, 166, 0.1));
 }
 
 .ant-menu-light .ant-menu-item:hover {
-  color: var(--ios-blue);
-  background: rgba(0, 122, 255, 0.08);
+  color: #066ad8;
+  background: rgba(31, 182, 166, 0.08);
 }
 
 .ant-table-wrapper {
@@ -199,7 +201,7 @@ body {
 .ant-table-tbody > tr > td {
   padding-top: 16px !important;
   padding-bottom: 16px !important;
-  border-bottom-color: rgba(60, 60, 67, 0.1) !important;
+  border-bottom-color: rgba(47, 67, 80, 0.1) !important;
 }
 
 .ant-btn {
@@ -208,7 +210,7 @@ body {
 }
 
 .ant-btn:not(.ant-btn-primary) {
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.76);
   border-color: var(--ios-border);
 }
 
@@ -217,7 +219,7 @@ body {
 }
 
 .ant-btn-primary {
-  background: var(--ios-blue);
+  background: linear-gradient(180deg, #36a6ff 0%, var(--ios-blue) 100%);
   box-shadow: none;
 }
 
@@ -231,8 +233,8 @@ body {
 
 .ant-modal-content {
   border: 1px solid var(--ios-border);
-  background: rgba(255, 255, 255, 0.9) !important;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.16) !important;
+  background: rgba(250, 253, 255, 0.9) !important;
+  box-shadow: 0 24px 70px rgba(30, 52, 66, 0.16) !important;
   backdrop-filter: blur(28px) saturate(180%);
 }
 
