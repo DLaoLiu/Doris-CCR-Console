@@ -28,6 +28,7 @@ import {
 } from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import logoUrl from "./assets/ccr-logo.svg";
 import type { CcrJob, Cluster, CreateJobRequest, JobOperation, OperationLog, Syncer } from "../shared/types";
 import { CCR_JOB_NAME_HELP, CCR_JOB_NAME_PATTERN } from "../shared/validation";
 
@@ -108,7 +109,10 @@ export default function App() {
   return (
     <Layout className="app-shell">
       <Sider className="app-sider" width={210}>
-        <div className="brand">Doris CCR Console</div>
+        <div className="brand">
+          <img className="brand-logo" src={logoUrl} alt="" aria-hidden="true" />
+          <span>Doris CCR Console</span>
+        </div>
         <Menu theme="light" mode="inline" selectedKeys={[page]} items={menuItems} onClick={(item) => setPage(item.key as PageKey)} />
       </Sider>
       <Content className="content">

@@ -63,19 +63,13 @@ body {
   border-bottom: 1px solid rgba(47, 67, 80, 0.1);
 }
 
-.brand::before {
-  content: "";
+.brand-logo {
   width: 28px;
   height: 28px;
-  display: grid;
-  place-items: center;
   flex: 0 0 28px;
+  display: block;
   border-radius: 8px;
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.55) 1px, transparent 1px) 8px 7px / 7px 14px no-repeat,
-    linear-gradient(0deg, rgba(255, 255, 255, 0.75) 1px, transparent 1px) 7px 8px / 14px 7px no-repeat,
-    linear-gradient(160deg, #54d8c8 0%, var(--ios-blue) 100%);
-  box-shadow: 0 8px 18px rgba(31, 182, 166, 0.24);
+  filter: drop-shadow(0 8px 18px rgba(31, 182, 166, 0.24));
 }
 
 .content {
