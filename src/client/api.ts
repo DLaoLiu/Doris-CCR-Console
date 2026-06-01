@@ -1,4 +1,4 @@
-import type { CcrJob, Cluster, CreateJobRequest, JobOperation, OperationLog, Syncer } from "../shared/types";
+import type { CcrJob, Cluster, CreateJobRequest, JobDetail, JobMetric, JobOperation, OperationLog, PreflightReport, Syncer } from "../shared/types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
@@ -42,7 +42,11 @@ export const api = {
   testSyncer: (id: number) => request<{ version: string; syncer: Syncer }>(`/api/syncers/${id}/version`),
   testSyncerDraft: (input: Partial<Syncer>) => request<{ version: string }>("/api/syncers/test", { method: "POST", body: JSON.stringify(input) }),
   listJobs: () => request<{ localJobs: CcrJob[]; remoteJobs: unknown }>("/api/ccr/jobs"),
+  preflightJob: (input: CreateJobRequest) => request<PreflightReport>("/api/ccr/preflight", { method: "POST", body: JSON.stringify(input) }),
   createJob: (input: CreateJobRequest) => request<CcrJob>("/api/ccr/jobs", { method: "POST", body: JSON.stringify(input) }),
+  jobDetail: (name: string) => request<JobDetail>(`/api/ccr/jobs/${encodeURIComponent(name)}/detail`),
+  jobMetrics: (name: string, limit = 100) => request<JobMetric[]>(`/api/ccr/jobs/${encodeURIComponent(name)}/metrics?limit=${limit}`),
+  refreshJob: (name: string) => request<{ success: boolean; status?: string; lag?: string; errorMessage?: string }>(`/api/ccr/jobs/${encodeURIComponent(name)}/refresh`, { method: "POST" }),
   refreshStatus: (name: string) => request<{ status: string }>(`/api/ccr/jobs/${encodeURIComponent(name)}/status`),
   refreshLag: (name: string) => request<{ lag: string }>(`/api/ccr/jobs/${encodeURIComponent(name)}/lag`),
   pauseJob: (name: string) => request<{ ok: boolean }>(`/api/ccr/jobs/${encodeURIComponent(name)}/pause`, { method: "POST" }),

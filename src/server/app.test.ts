@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +7,7 @@ import type { AppConfig } from "./config.js";
 import { AppDatabase } from "./db.js";
 import { createApp } from "./app.js";
 import type { SyncerClient } from "./syncer-client.js";
+import type { DorisInspector } from "./doris-inspector.js";
 
 let tempDir: string | undefined;
 
@@ -163,6 +165,123 @@ describe("CCR job API logging", () => {
 
     await app.inject({ method: "POST", url: "/api/ccr/jobs/sync_cz/desync" });
     expect(db.getJobByName("sync_cz")?.lastStatus).toBe("ended_desynced");
+    await app.close();
+  });
+
+  it("runs preflight checks with warnings and no fake success", async () => {
+    const portServer = net.createServer();
+    await new Promise<void>((resolve) => portServer.listen(0, "127.0.0.1", resolve));
+    const port = (portServer.address() as { port: number }).port;
+    const config = createConfig();
+    const db = new AppDatabase(config);
+    const source = db.createCluster({ name: "source", role: "source", host: "127.0.0.1", queryPort: port, thriftPort: port, user: "root", password: "" })!;
+    const target = db.createCluster({ name: "target", role: "target", host: "127.0.0.1", queryPort: port, thriftPort: port, user: "root", password: "" })!;
+    const syncer = db.createSyncer({ name: "syncer", host: "127.0.0.1", port: 9190 })!;
+    const fakeSyncerClient = {
+      version: async () => ({ version: "2.1.0" })
+    } as unknown as SyncerClient;
+    const fakeInspector: DorisInspector = {
+      inspectObject: async (cluster) => ({ connected: true, databaseExists: true, tableExists: cluster.role === "source", binlogEnabled: cluster.role === "source" ? undefined : undefined })
+    };
+    const app = createApp(config, db, fakeSyncerClient, fakeInspector);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ccr/preflight",
+      payload: {
+        name: "sync_cz",
+        syncerId: syncer.id,
+        sourceClusterId: source.id,
+        targetClusterId: target.id,
+        syncType: "table",
+        sourceDatabase: "src",
+        sourceTable: "tbl",
+        targetDatabase: "dst",
+        targetTable: "tbl"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ ok: true, canContinue: true });
+    expect(response.json().checks.some((item: { status: string }) => item.status === "warning")).toBe(true);
+    expect(db.listLogs({ jobName: "sync_cz", action: "preflight" })[0].success).toBe(true);
+    await app.close();
+    await new Promise<void>((resolve) => portServer.close(() => resolve()));
+  });
+
+  it("expects source table to exist and target table to be absent for table sync preflight", async () => {
+    const portServer = net.createServer();
+    await new Promise<void>((resolve) => portServer.listen(0, "127.0.0.1", resolve));
+    const port = (portServer.address() as { port: number }).port;
+    const config = createConfig();
+    const db = new AppDatabase(config);
+    const source = db.createCluster({ name: "source", role: "source", host: "127.0.0.1", queryPort: port, thriftPort: port, user: "root", password: "" })!;
+    const target = db.createCluster({ name: "target", role: "target", host: "127.0.0.1", queryPort: port, thriftPort: port, user: "root", password: "" })!;
+    const syncer = db.createSyncer({ name: "syncer", host: "127.0.0.1", port: 9190 })!;
+    const fakeSyncerClient = { version: async () => ({ version: "2.1.0" }) } as unknown as SyncerClient;
+    const fakeInspector: DorisInspector = {
+      inspectObject: async (cluster) => ({
+        connected: true,
+        databaseExists: true,
+        tableExists: cluster.role === "source",
+        binlogEnabled: cluster.role === "source" ? true : undefined
+      })
+    };
+    const app = createApp(config, db, fakeSyncerClient, fakeInspector);
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/ccr/preflight",
+      payload: {
+        name: "sync_cz",
+        syncerId: syncer.id,
+        sourceClusterId: source.id,
+        targetClusterId: target.id,
+        syncType: "table",
+        sourceDatabase: "src",
+        sourceTable: "bfi_imsi",
+        targetDatabase: "dst",
+        targetTable: "bfi_imsi"
+      }
+    });
+
+    expect(response.statusCode).toBe(200);
+    const checks = response.json().checks as Array<{ key: string; status: string }>;
+    expect(checks.find((item) => item.key === "source_table_exists")).toMatchObject({ status: "passed" });
+    expect(checks.find((item) => item.key === "target_table_absent")).toMatchObject({ status: "passed" });
+    await app.close();
+    await new Promise<void>((resolve) => portServer.close(() => resolve()));
+  });
+
+  it("stores refresh metrics history and returns job detail", async () => {
+    const config = createConfig();
+    const db = new AppDatabase(config);
+    const source = db.createCluster({ name: "source", role: "source", host: "10.10.10.114", queryPort: 9030, thriftPort: 9020, user: "root", password: "" })!;
+    const target = db.createCluster({ name: "target", role: "target", host: "10.10.10.115", queryPort: 9030, thriftPort: 9020, user: "root", password: "" })!;
+    const syncer = db.createSyncer({ name: "syncer", host: "127.0.0.1", port: 9190 })!;
+    db.createJob({
+      name: "sync_cz",
+      syncerId: syncer.id,
+      sourceClusterId: source.id,
+      targetClusterId: target.id,
+      syncType: "database",
+      sourceDatabase: "src",
+      targetDatabase: "dst"
+    });
+    let lag = 279;
+    const fakeSyncerClient = {
+      jobStatus: async () => ({ status: "running" }),
+      lag: async () => ({ lag: lag === 279 ? lag-- : 0 })
+    } as unknown as SyncerClient;
+    const app = createApp(config, db, fakeSyncerClient);
+
+    await app.inject({ method: "POST", url: "/api/ccr/jobs/sync_cz/refresh" });
+    await app.inject({ method: "POST", url: "/api/ccr/jobs/sync_cz/refresh" });
+    const detail = await app.inject({ method: "GET", url: "/api/ccr/jobs/sync_cz/detail" });
+
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json().job).toMatchObject({ lastLag: "0", lifecycle: "running" });
+    expect(detail.json().metrics.map((metric: { lag: string }) => metric.lag)).toEqual(["0", "279"]);
     await app.close();
   });
 });

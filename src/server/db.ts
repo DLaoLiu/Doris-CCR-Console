@@ -1,7 +1,7 @@
 import Database from "better-sqlite3";
 import type { AppConfig } from "./config.js";
 import { decryptText, encryptText } from "./crypto.js";
-import type { CcrJob, Cluster, ClusterRole, CreateJobRequest, JobOperation, OperationLog, Syncer } from "../shared/types.js";
+import type { CcrJob, Cluster, ClusterRole, CreateJobRequest, JobDiagnostic, JobLifecycle, JobMetric, JobOperation, OperationLog, Syncer } from "../shared/types.js";
 
 type Row = Record<string, unknown>;
 
@@ -41,6 +41,17 @@ function normalizeSyncer(row: Row): Syncer {
   };
 }
 
+function normalizeLifecycle(row: Row): JobLifecycle {
+  const lifecycle = row.lifecycle as JobLifecycle | undefined;
+  if (lifecycle && lifecycle !== "unknown") return lifecycle;
+  const status = row.last_status ? String(row.last_status) : "";
+  if (/ended_desynced|desync|ended/i.test(status)) return "desynced";
+  if (/paused|pause/i.test(status)) return "paused";
+  if (/fail|error|exception/i.test(status)) return "failed";
+  if (/running|normal|success|ok/i.test(status)) return "running";
+  return lifecycle ?? "unknown";
+}
+
 function normalizeJob(row: Row): CcrJob {
   return {
     id: Number(row.id),
@@ -55,6 +66,9 @@ function normalizeJob(row: Row): CcrJob {
     targetTable: row.target_table ? String(row.target_table) : undefined,
     lastStatus: row.last_status ? String(row.last_status) : undefined,
     lastLag: row.last_lag ? String(row.last_lag) : undefined,
+    lifecycle: normalizeLifecycle(row),
+    lastError: row.last_error ? String(row.last_error) : undefined,
+    lastCheckedAt: row.last_checked_at ? String(row.last_checked_at) : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at)
   };
@@ -67,6 +81,34 @@ function normalizeLog(row: Row): OperationLog {
     action: row.action as JobOperation,
     success: Boolean(row.success),
     message: row.message ? String(row.message) : undefined,
+    createdAt: String(row.created_at)
+  };
+}
+
+function normalizeMetric(row: Row): JobMetric {
+  return {
+    id: Number(row.id),
+    jobName: String(row.job_name),
+    status: row.status ? String(row.status) : undefined,
+    lag: row.lag ? String(row.lag) : undefined,
+    success: Boolean(row.success),
+    errorMessage: row.error_message ? String(row.error_message) : undefined,
+    rawStatus: row.raw_status ? String(row.raw_status) : undefined,
+    rawLag: row.raw_lag ? String(row.raw_lag) : undefined,
+    createdAt: String(row.created_at)
+  };
+}
+
+function normalizeDiagnostic(row: Row): JobDiagnostic {
+  return {
+    id: Number(row.id),
+    jobName: row.job_name ? String(row.job_name) : undefined,
+    severity: row.severity as JobDiagnostic["severity"],
+    title: String(row.title),
+    summary: String(row.summary),
+    suggestion: String(row.suggestion),
+    retryable: Boolean(row.retryable),
+    source: row.source ? String(row.source) : undefined,
     createdAt: String(row.created_at)
   };
 }
@@ -125,6 +167,9 @@ export class AppDatabase {
         target_table TEXT,
         last_status TEXT,
         last_lag TEXT,
+        lifecycle TEXT NOT NULL DEFAULT 'unknown',
+        last_error TEXT,
+        last_checked_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(syncer_id) REFERENCES syncers(id),
@@ -140,7 +185,41 @@ export class AppDatabase {
         message TEXT,
         created_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS job_metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_name TEXT NOT NULL,
+        status TEXT,
+        lag TEXT,
+        success INTEGER NOT NULL,
+        error_message TEXT,
+        raw_status TEXT,
+        raw_lag TEXT,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS job_diagnostics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_name TEXT,
+        severity TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        suggestion TEXT NOT NULL,
+        retryable INTEGER NOT NULL,
+        source TEXT,
+        created_at TEXT NOT NULL
+      );
     `);
+    this.addColumnIfMissing("ccr_jobs", "lifecycle", "TEXT NOT NULL DEFAULT 'unknown'");
+    this.addColumnIfMissing("ccr_jobs", "last_error", "TEXT");
+    this.addColumnIfMissing("ccr_jobs", "last_checked_at", "TEXT");
+  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string) {
+    const exists = this.db.prepare(`PRAGMA table_info(${table})`).all().some((row) => (row as Row).name === column);
+    if (!exists) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 
   listClusters() {
@@ -243,11 +322,24 @@ export class AppDatabase {
   }
 
   updateJobStatus(name: string, patch: Pick<Partial<CcrJob>, "lastStatus" | "lastLag">) {
+    return this.updateJobSnapshot(name, patch);
+  }
+
+  updateJobSnapshot(name: string, patch: Pick<Partial<CcrJob>, "lastStatus" | "lastLag" | "lifecycle" | "lastError" | "lastCheckedAt">) {
     const job = this.getJobByName(name);
     if (!job) return undefined;
     this.db
-      .prepare("UPDATE ccr_jobs SET last_status = COALESCE(?, last_status), last_lag = COALESCE(?, last_lag), updated_at = ? WHERE name = ?")
-      .run(patch.lastStatus ?? null, patch.lastLag ?? null, now(), name);
+      .prepare(
+        `UPDATE ccr_jobs
+         SET last_status = COALESCE(?, last_status),
+             last_lag = COALESCE(?, last_lag),
+             lifecycle = COALESCE(?, lifecycle),
+             last_error = ?,
+             last_checked_at = COALESCE(?, last_checked_at),
+             updated_at = ?
+         WHERE name = ?`
+      )
+      .run(patch.lastStatus ?? null, patch.lastLag ?? null, patch.lifecycle ?? null, patch.lastError ?? null, patch.lastCheckedAt ?? null, now(), name);
     return this.getJobByName(name);
   }
 
@@ -259,6 +351,41 @@ export class AppDatabase {
     this.db
       .prepare("INSERT INTO operation_logs (job_name, action, success, message, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(jobName ?? null, action, success ? 1 : 0, message ?? null, now());
+  }
+
+  addMetric(input: Omit<JobMetric, "id" | "createdAt">) {
+    const ts = now();
+    this.db
+      .prepare("INSERT INTO job_metrics (job_name, status, lag, success, error_message, raw_status, raw_lag, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(input.jobName, input.status ?? null, input.lag ?? null, input.success ? 1 : 0, input.errorMessage ?? null, input.rawStatus ?? null, input.rawLag ?? null, ts);
+    return this.listMetrics(input.jobName, 1)[0];
+  }
+
+  listMetrics(jobName: string, limit = 100) {
+    return this.db
+      .prepare("SELECT * FROM job_metrics WHERE job_name = ? ORDER BY id DESC LIMIT ?")
+      .all(jobName, limit)
+      .map((row) => normalizeMetric(row as Row));
+  }
+
+  replaceDiagnostics(jobName: string | undefined, diagnostics: Omit<JobDiagnostic, "id" | "createdAt" | "jobName">[]) {
+    if (jobName) {
+      this.db.prepare("DELETE FROM job_diagnostics WHERE job_name = ?").run(jobName);
+    }
+    const ts = now();
+    const insert = this.db.prepare(
+      "INSERT INTO job_diagnostics (job_name, severity, title, summary, suggestion, retryable, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    );
+    for (const diagnostic of diagnostics) {
+      insert.run(jobName ?? null, diagnostic.severity, diagnostic.title, diagnostic.summary, diagnostic.suggestion, diagnostic.retryable ? 1 : 0, diagnostic.source ?? null, ts);
+    }
+  }
+
+  listDiagnostics(jobName: string) {
+    return this.db
+      .prepare("SELECT * FROM job_diagnostics WHERE job_name = ? ORDER BY id DESC LIMIT 50")
+      .all(jobName)
+      .map((row) => normalizeDiagnostic(row as Row));
   }
 
   listLogs(filter: { jobName?: string; action?: JobOperation }) {

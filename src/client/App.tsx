@@ -1,10 +1,14 @@
 import {
+  Alert,
   App as AntApp,
   Button,
+  Descriptions,
+  Drawer,
   Form,
   Input,
   InputNumber,
   Layout,
+  List,
   Menu,
   Modal,
   Popconfirm,
@@ -20,16 +24,17 @@ import {
   DatabaseOutlined,
   DeleteOutlined,
   FileSearchOutlined,
+  InfoCircleOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
   StopOutlined
 } from "@ant-design/icons";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import logoUrl from "./assets/ccr-logo.svg";
-import type { CcrJob, Cluster, CreateJobRequest, JobOperation, OperationLog, Syncer } from "../shared/types";
+import logoUrl from "./assets/ccr-logo-app.png";
+import type { CcrJob, CheckStatus, Cluster, CreateJobRequest, JobDetail, JobDiagnostic, JobMetric, JobOperation, OperationLog, PreflightReport, Syncer } from "../shared/types";
 import { CCR_JOB_NAME_HELP, CCR_JOB_NAME_PATTERN } from "../shared/validation";
 
 type PageKey = "dashboard" | "clusters" | "syncers" | "jobs" | "logs";
@@ -47,6 +52,8 @@ export default function App() {
   const [clusterModal, setClusterModal] = useState<Cluster | null | "new">(null);
   const [syncerModal, setSyncerModal] = useState<Syncer | null | "new">(null);
   const [jobModalOpen, setJobModalOpen] = useState(false);
+  const [jobDetailName, setJobDetailName] = useState<string>();
+  const [jobDetail, setJobDetail] = useState<JobDetail>();
   const [dashboard, setDashboard] = useState({
     syncerCount: 0,
     jobCount: 0,
@@ -81,14 +88,36 @@ export default function App() {
     void refreshAll();
   }, []);
 
-  const run = async (task: () => Promise<unknown>, successText: string) => {
+  const run = async <T,>(task: () => Promise<T>, successText: string) => {
     setLoading(true);
     try {
-      await task();
+      const result = await task();
       message.success(successText);
       await refreshAll();
+      if (jobDetailName) {
+        await loadJobDetail(jobDetailName);
+      }
+      return result;
     } catch (error) {
       message.error(error instanceof Error ? error.message : "操作失败");
+      return undefined;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadJobDetail = async (name: string) => {
+    const detail = await api.jobDetail(name);
+    setJobDetailName(name);
+    setJobDetail(detail);
+  };
+
+  const openJobDetail = async (name: string) => {
+    setLoading(true);
+    try {
+      await loadJobDetail(name);
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : "任务详情加载失败");
     } finally {
       setLoading(false);
     }
@@ -126,10 +155,11 @@ export default function App() {
             loading={loading}
             onRun={run}
             onCreate={() => setJobModalOpen(true)}
+            onDetail={openJobDetail}
             confirmDesync={(job) =>
               modal.confirm({
                 title: `结束同步关系：${job.name}`,
-                content: "desync 会结束 CCR 同步关系，请确认该任务不再需要继续增量同步。",
+                content: "desync 会结束 CCR 同步关系，结束后不可恢复，只能重新创建任务。请确认该任务不再需要继续增量同步。",
                 okText: "确认结束同步",
                 okButtonProps: { danger: true },
                 cancelText: "取消",
@@ -175,15 +205,29 @@ export default function App() {
         />
       </Modal>
 
-      <Modal title="创建 CCR 任务" open={jobModalOpen} footer={null} onCancel={() => setJobModalOpen(false)} destroyOnHidden width={640}>
+      <Modal title="创建 CCR 任务" open={jobModalOpen} footer={null} onCancel={() => setJobModalOpen(false)} destroyOnHidden width={980}>
         <JobForm
           syncers={syncerOptions}
           sources={sourceOptions}
           targets={targetOptions}
           onCancel={() => setJobModalOpen(false)}
+          onPreflight={api.preflightJob}
           onSubmit={(values) => run(() => api.createJob(values), "CCR 任务已创建").then(() => setJobModalOpen(false))}
         />
       </Modal>
+
+      <JobDetailDrawer
+        open={Boolean(jobDetailName)}
+        detail={jobDetail}
+        syncers={syncers}
+        clusters={clusters}
+        loading={loading}
+        onClose={() => {
+          setJobDetailName(undefined);
+          setJobDetail(undefined);
+        }}
+        onRefresh={() => jobDetailName && run(() => api.refreshJob(jobDetailName), "任务快照已刷新")}
+      />
     </Layout>
   );
 }
@@ -242,7 +286,7 @@ function ClustersPage({
 }: {
   clusters: Cluster[];
   loading: boolean;
-  onRun: (task: () => Promise<unknown>, success: string) => Promise<void>;
+  onRun: <T>(task: () => Promise<T>, success: string) => Promise<T | undefined>;
   onEdit: (record: Cluster | "new") => void;
 }) {
   return (
@@ -359,7 +403,7 @@ function SyncersPage({
 }: {
   syncers: Syncer[];
   loading: boolean;
-  onRun: (task: () => Promise<unknown>, success: string) => Promise<void>;
+  onRun: <T>(task: () => Promise<T>, success: string) => Promise<T | undefined>;
   onEdit: (record: Syncer | "new") => void;
 }) {
   return (
@@ -458,13 +502,15 @@ function JobsPage({
   loading,
   onRun,
   onCreate,
+  onDetail,
   confirmDesync
 }: {
   syncers: Syncer[];
   jobs: CcrJob[];
   loading: boolean;
-  onRun: (task: () => Promise<unknown>, success: string) => Promise<void>;
+  onRun: <T>(task: () => Promise<T>, success: string) => Promise<T | undefined>;
   onCreate: () => void;
+  onDetail: (name: string) => Promise<void>;
   confirmDesync: (job: CcrJob) => void;
 }) {
   return (
@@ -480,7 +526,7 @@ function JobsPage({
         loading={loading}
         dataSource={jobs}
         columns={[
-          ...jobColumns(syncers),
+          ...jobColumns(syncers, onDetail),
           {
             title: "操作",
             fixed: "right",
@@ -489,18 +535,18 @@ function JobsPage({
               const paused = isPausedJob(record);
               return (
                 <Space wrap>
-                  <Button size="small" disabled={ended} title={ended ? "已结束同步，不能再刷新远端状态" : undefined} onClick={() => void onRun(() => api.refreshStatus(record.name), "状态已刷新")}>
-                    状态
+                  <Button size="small" icon={<InfoCircleOutlined />} onClick={() => void onDetail(record.name)}>
+                    详情
                   </Button>
-                  <Button size="small" disabled={ended} title={ended ? "已结束同步，不能再刷新延迟" : undefined} onClick={() => void onRun(() => api.refreshLag(record.name), "延迟已刷新")}>
-                    延迟
+                  <Button size="small" disabled={ended} icon={<ReloadOutlined />} onClick={() => void onRun(() => api.refreshJob(record.name), "任务快照已刷新")}>
+                    刷新
                   </Button>
-                  <Button size="small" disabled={ended || paused} title={ended ? "已结束同步，不能暂停" : paused ? "任务已暂停" : "暂停"} icon={<PauseCircleOutlined />} onClick={() => void onRun(() => api.pauseJob(record.name), "任务已暂停")} />
-                  <Button size="small" disabled={ended || !paused} title={ended ? "已结束同步，不能恢复；请重新创建 CCR 任务" : paused ? "恢复" : "只有暂停任务可以恢复"} icon={<PlayCircleOutlined />} onClick={() => void onRun(() => api.resumeJob(record.name), "任务已恢复")} />
+                  <Button size="small" disabled={ended || paused} title={paused ? "任务已暂停" : "暂停"} icon={<PauseCircleOutlined />} onClick={() => void onRun(() => api.pauseJob(record.name), "任务已暂停")} />
+                  <Button size="small" disabled={ended || !paused} title={ended ? "已结束同步，不能恢复" : paused ? "恢复" : "只有暂停任务可以恢复"} icon={<PlayCircleOutlined />} onClick={() => void onRun(() => api.resumeJob(record.name), "任务已恢复")} />
                   <Popconfirm title="删除该 CCR 任务？" onConfirm={() => void onRun(() => api.deleteJob(record.name), "任务已删除")}>
                     <Button size="small" danger icon={<DeleteOutlined />} />
                   </Popconfirm>
-                  <Button size="small" danger disabled={ended} title={ended ? "已结束同步，不能再次结束；不可恢复，只能重新创建任务" : "结束同步后不可恢复"} icon={<StopOutlined />} onClick={() => confirmDesync(record)}>
+                  <Button size="small" danger disabled={ended} title={ended ? "已结束同步，不可恢复" : "结束同步后不可恢复"} icon={<StopOutlined />} onClick={() => confirmDesync(record)}>
                     结束同步
                   </Button>
                 </Space>
@@ -508,7 +554,7 @@ function JobsPage({
             }
           }
         ]}
-        scroll={{ x: 1100 }}
+        scroll={{ x: 1240 }}
       />
     </>
   );
@@ -519,60 +565,291 @@ function JobForm({
   sources,
   targets,
   onSubmit,
-  onCancel
+  onCancel,
+  onPreflight
 }: {
   syncers: Array<{ value: number; label: string }>;
   sources: Array<{ value: number; label: string }>;
   targets: Array<{ value: number; label: string }>;
   onSubmit: (values: CreateJobRequest) => Promise<void>;
   onCancel: () => void;
+  onPreflight: (values: CreateJobRequest) => Promise<PreflightReport>;
 }) {
+  const { message, modal } = AntApp.useApp();
   const [form] = Form.useForm<CreateJobRequest>();
   const syncType = Form.useWatch("syncType", form);
+  const [report, setReport] = useState<PreflightReport>();
+  const [preflighting, setPreflighting] = useState(false);
+
+  const runPreflight = async () => {
+    const values = await form.validateFields();
+    setPreflighting(true);
+    try {
+      const result = await onPreflight(values);
+      setReport(result);
+      if (result.ok) {
+        message.success("预检通过");
+      } else {
+        message.warning("预检发现阻断项");
+      }
+      return result;
+    } finally {
+      setPreflighting(false);
+    }
+  };
+
+  const submitWithPreflight = async () => {
+    const result = report ?? (await runPreflight());
+    if (!result.canContinue) {
+      message.error("预检存在失败项，请修复后再创建");
+      return;
+    }
+    const warnings = result.checks.filter((item) => item.status === "warning").length;
+    const values = await form.validateFields();
+    if (warnings > 0) {
+      modal.confirm({
+        title: "预检存在警告，仍要创建吗？",
+        content: `当前还有 ${warnings} 个需要人工确认的项目。创建前请确认 binlog、版本兼容和权限已经满足要求。`,
+        okText: "继续创建",
+        cancelText: "返回检查",
+        onOk: () => onSubmit(values)
+      });
+      return;
+    }
+    await onSubmit(values);
+  };
+
   return (
-    <Form form={form} layout="vertical" initialValues={{ syncType: "database" }} onFinish={onSubmit}>
-      <Form.Item name="name" label="任务名" rules={[{ required: true, message: "请输入任务名" }, { pattern: CCR_JOB_NAME_PATTERN, message: CCR_JOB_NAME_HELP }]}>
-        <Input placeholder="例如 sync_cz 或 ccr_job_01" />
-      </Form.Item>
-      <Form.Item name="syncerId" label="Syncer" rules={[{ required: true }]}>
-        <Select options={syncers} />
-      </Form.Item>
-      <Space.Compact block>
-        <Form.Item name="sourceClusterId" label="源集群" rules={[{ required: true }]} style={{ width: "50%" }}>
-          <Select options={sources} />
-        </Form.Item>
-        <Form.Item name="targetClusterId" label="目标集群" rules={[{ required: true }]} style={{ width: "50%" }}>
-          <Select options={targets} />
-        </Form.Item>
-      </Space.Compact>
-      <Form.Item name="syncType" label="同步类型" rules={[{ required: true }]}>
-        <Select options={[{ value: "database", label: "库级同步" }, { value: "table", label: "表级同步" }]} />
-      </Form.Item>
-      <Space.Compact block>
-        <Form.Item name="sourceDatabase" label="源库" rules={[{ required: true }]} style={{ width: "50%" }}>
-          <Input />
-        </Form.Item>
-        <Form.Item name="targetDatabase" label="目标库" rules={[{ required: true }]} style={{ width: "50%" }}>
-          <Input />
-        </Form.Item>
-      </Space.Compact>
-      {syncType === "table" && (
-        <Space.Compact block>
-          <Form.Item name="sourceTable" label="源表" rules={[{ required: true }]} style={{ width: "50%" }}>
-            <Input />
+    <Form form={form} layout="vertical" initialValues={{ syncType: "database" }} onValuesChange={() => setReport(undefined)}>
+      <div className="job-form-grid">
+        <div className="job-form-fields">
+          <Form.Item name="name" label="任务名" rules={[{ required: true, message: "请输入任务名" }, { pattern: CCR_JOB_NAME_PATTERN, message: CCR_JOB_NAME_HELP }]}>
+            <Input placeholder="例如 sync_cz 或 ccr_job_01" />
           </Form.Item>
-          <Form.Item name="targetTable" label="目标表" rules={[{ required: true }]} style={{ width: "50%" }}>
-            <Input />
+          <Form.Item name="syncerId" label="Syncer" rules={[{ required: true }]}>
+            <Select options={syncers} />
           </Form.Item>
-        </Space.Compact>
-      )}
-      <Space className="form-actions">
+          <Space.Compact block>
+            <Form.Item name="sourceClusterId" label="源集群" rules={[{ required: true }]} style={{ width: "50%" }}>
+              <Select options={sources} />
+            </Form.Item>
+            <Form.Item name="targetClusterId" label="目标集群" rules={[{ required: true }]} style={{ width: "50%" }}>
+              <Select options={targets} />
+            </Form.Item>
+          </Space.Compact>
+          <Form.Item name="syncType" label="同步类型" rules={[{ required: true }]}>
+            <Select options={[{ value: "database", label: "库级同步" }, { value: "table", label: "表级同步" }]} />
+          </Form.Item>
+          <Space.Compact block>
+            <Form.Item name="sourceDatabase" label="源库" rules={[{ required: true }]} style={{ width: "50%" }}>
+              <Input />
+            </Form.Item>
+            <Form.Item name="targetDatabase" label="目标库" rules={[{ required: true }]} style={{ width: "50%" }}>
+              <Input />
+            </Form.Item>
+          </Space.Compact>
+          {syncType === "table" && (
+            <Space.Compact block>
+              <Form.Item name="sourceTable" label="源表" rules={[{ required: true }]} style={{ width: "50%" }}>
+                <Input />
+              </Form.Item>
+              <Form.Item name="targetTable" label="目标表" rules={[{ required: true }]} style={{ width: "50%" }}>
+                <Input />
+              </Form.Item>
+            </Space.Compact>
+          )}
+        </div>
+        <div className="job-form-preflight">
+          {report ? (
+            <PreflightPanel report={report} />
+          ) : (
+            <div className="preflight-placeholder">
+              <InfoCircleOutlined />
+              <Typography.Text strong>创建前建议先预检</Typography.Text>
+              <Typography.Text type="secondary">会检查 Syncer、Doris 端口、源表、目标表占用、binlog 与版本兼容提示。</Typography.Text>
+            </div>
+          )}
+        </div>
+      </div>
+      <Space className="form-actions job-form-actions">
         <Button onClick={onCancel}>取消</Button>
-        <Button htmlType="submit" type="primary">
+        <Button onClick={() => void runPreflight()} loading={preflighting}>
+          预检
+        </Button>
+        <Button type="primary" onClick={() => void submitWithPreflight()} loading={preflighting}>
           创建
         </Button>
       </Space>
     </Form>
+  );
+}
+
+function PreflightPanel({ report }: { report: PreflightReport }) {
+  const failed = report.checks.filter((item) => item.status === "failed").length;
+  const warnings = report.checks.filter((item) => item.status === "warning").length;
+  return (
+    <div className="preflight-panel">
+      <Alert
+        type={failed ? "error" : warnings ? "warning" : "success"}
+        showIcon
+        message={failed ? `预检存在 ${failed} 个失败项` : warnings ? `预检通过，但有 ${warnings} 个警告` : "预检通过"}
+        description={`检查时间：${formatDateTime(report.checkedAt)}`}
+      />
+      <List
+        size="small"
+        dataSource={report.checks}
+        renderItem={(item) => (
+          <List.Item>
+            <List.Item.Meta
+              title={
+                <Space>
+                  {checkTag(item.status)}
+                  <span>{item.label}</span>
+                </Space>
+              }
+              description={
+                <>
+                  <div>{item.message}</div>
+                  {item.suggestion && <div className="subtle-text">{item.suggestion}</div>}
+                </>
+              }
+            />
+          </List.Item>
+        )}
+      />
+    </div>
+  );
+}
+
+function JobDetailDrawer({
+  open,
+  detail,
+  syncers,
+  clusters,
+  loading,
+  onClose,
+  onRefresh
+}: {
+  open: boolean;
+  detail?: JobDetail;
+  syncers: Syncer[];
+  clusters: Cluster[];
+  loading: boolean;
+  onClose: () => void;
+  onRefresh: () => void;
+}) {
+  const syncerName = new Map(syncers.map((syncer) => [syncer.id, syncer.name]));
+  const clusterName = new Map(clusters.map((cluster) => [cluster.id, cluster.name]));
+  const metrics = useMemo(() => [...(detail?.metrics ?? [])].reverse(), [detail]);
+  const maxLag = Math.max(0, ...metrics.map((item) => Number(item.lag)).filter(Number.isFinite));
+  const failedRefreshes = metrics.filter((item) => !item.success).length;
+
+  return (
+    <Drawer
+      title={detail?.job.name ?? "任务详情"}
+      open={open}
+      onClose={onClose}
+      width={720}
+      extra={
+        <Button icon={<ReloadOutlined />} loading={loading} disabled={detail ? isEndedJob(detail.job) : true} onClick={onRefresh}>
+          刷新快照
+        </Button>
+      }
+    >
+      {detail && (
+        <Space direction="vertical" size={16} style={{ width: "100%" }}>
+          <Descriptions bordered size="small" column={2}>
+            <Descriptions.Item label="生命周期">{renderLifecycle(detail.job)}</Descriptions.Item>
+            <Descriptions.Item label="Syncer">{syncerName.get(detail.job.syncerId) ?? detail.job.syncerId}</Descriptions.Item>
+            <Descriptions.Item label="源集群">{clusterName.get(detail.job.sourceClusterId) ?? detail.job.sourceClusterId}</Descriptions.Item>
+            <Descriptions.Item label="目标集群">{clusterName.get(detail.job.targetClusterId) ?? detail.job.targetClusterId}</Descriptions.Item>
+            <Descriptions.Item label="源库/表">{`${detail.job.sourceDatabase}${detail.job.sourceTable ? `.${detail.job.sourceTable}` : ""}`}</Descriptions.Item>
+            <Descriptions.Item label="目标库/表">{`${detail.job.targetDatabase}${detail.job.targetTable ? `.${detail.job.targetTable}` : ""}`}</Descriptions.Item>
+            <Descriptions.Item label="最近状态">{renderJobStatus(detail.job.lastStatus)}</Descriptions.Item>
+            <Descriptions.Item label="最近延迟">{detail.job.lastLag || "-"}</Descriptions.Item>
+            <Descriptions.Item label="最近检查">{detail.job.lastCheckedAt ? formatDateTime(detail.job.lastCheckedAt) : "-"}</Descriptions.Item>
+            <Descriptions.Item label="最近错误">{detail.job.lastError || "-"}</Descriptions.Item>
+          </Descriptions>
+
+          <div className="detail-grid">
+            <Metric label="最大延迟" value={maxLag} />
+            <Metric label="刷新失败" value={failedRefreshes} tone={failedRefreshes ? "danger" : undefined} />
+          </div>
+
+          <section className="detail-section">
+            <Typography.Title level={5}>延迟历史</Typography.Title>
+            <LagSparkline metrics={metrics} />
+          </section>
+
+          <section className="detail-section">
+            <Typography.Title level={5}>诊断</Typography.Title>
+            {detail.diagnostics.length ? <DiagnosticList diagnostics={detail.diagnostics} /> : <Alert type="success" showIcon message="暂无诊断异常" />}
+          </section>
+
+          <section className="detail-section">
+            <Typography.Title level={5}>原始 Syncer 快照</Typography.Title>
+            <pre className="raw-block">{JSON.stringify(detail.rawSnapshot ?? {}, null, 2)}</pre>
+          </section>
+
+          <section className="detail-section">
+            <Typography.Title level={5}>最近操作</Typography.Title>
+            <Table
+              size="small"
+              rowKey="id"
+              pagination={false}
+              dataSource={detail.logs.slice(0, 8)}
+              columns={[
+                { title: "时间", dataIndex: "createdAt", render: formatDateTime },
+                { title: "操作", dataIndex: "action" },
+                { title: "结果", dataIndex: "success", render: (value) => <Tag color={value ? "green" : "red"}>{value ? "成功" : "失败"}</Tag> },
+                { title: "消息", dataIndex: "message" }
+              ]}
+            />
+          </section>
+        </Space>
+      )}
+    </Drawer>
+  );
+}
+
+function LagSparkline({ metrics }: { metrics: JobMetric[] }) {
+  const values = metrics.map((item) => Number(item.lag)).filter(Number.isFinite);
+  const max = Math.max(1, ...values);
+  if (!values.length) return <div className="empty-state">暂无延迟数据</div>;
+  return (
+    <div className="lag-chart">
+      {values.slice(-40).map((value, index) => (
+        <span key={`${index}-${value}`} className="lag-bar" style={{ height: `${Math.max(8, (value / max) * 100)}%` }} title={`${value}`} />
+      ))}
+    </div>
+  );
+}
+
+function DiagnosticList({ diagnostics }: { diagnostics: JobDiagnostic[] }) {
+  return (
+    <List
+      size="small"
+      dataSource={diagnostics}
+      renderItem={(item) => (
+        <List.Item>
+          <List.Item.Meta
+            title={
+              <Space>
+                <Tag color={item.severity === "error" ? "red" : item.severity === "warning" ? "orange" : "blue"}>{item.severity}</Tag>
+                <span>{item.title}</span>
+              </Space>
+            }
+            description={
+              <>
+                <div>{item.summary}</div>
+                <div className="subtle-text">{item.suggestion}</div>
+                {item.source && <div className="diagnostic-source">{item.source}</div>}
+              </>
+            }
+          />
+        </List.Item>
+      )}
+    />
   );
 }
 
@@ -589,7 +866,7 @@ function LogsPage({
 }) {
   const [jobName, setJobName] = useState<string>();
   const [action, setAction] = useState<JobOperation>();
-  const actions: JobOperation[] = ["create", "pause", "resume", "delete", "desync", "refresh_status", "refresh_lag", "test_cluster", "test_syncer"];
+  const actions: JobOperation[] = ["create", "preflight", "pause", "resume", "delete", "desync", "refresh", "refresh_status", "refresh_lag", "test_cluster", "test_syncer"];
   return (
     <>
       <div className="toolbar">
@@ -618,10 +895,22 @@ function LogsPage({
   );
 }
 
-function jobColumns(syncers: Syncer[]) {
+function jobColumns(syncers: Syncer[], onDetail?: (name: string) => Promise<void>) {
   const syncerName = new Map(syncers.map((syncer) => [syncer.id, syncer.name]));
   return [
-    { title: "任务名", dataIndex: "name" },
+    {
+      title: "任务名",
+      dataIndex: "name",
+      render: (value: string) =>
+        onDetail ? (
+          <Button type="link" className="link-button" onClick={() => void onDetail(value)}>
+            {value}
+          </Button>
+        ) : (
+          value
+        )
+    },
+    { title: "生命周期", render: (_: unknown, record: CcrJob) => renderLifecycle(record) },
     { title: "Syncer", dataIndex: "syncerId", render: (id: number) => syncerName.get(id) ?? id },
     { title: "类型", dataIndex: "syncType", render: (value: string) => (value === "database" ? "库级" : "表级") },
     { title: "源库/表", render: (_: unknown, record: CcrJob) => `${record.sourceDatabase}${record.sourceTable ? `.${record.sourceTable}` : ""}` },
@@ -632,31 +921,44 @@ function jobColumns(syncers: Syncer[]) {
 }
 
 function isPausedJob(job: CcrJob) {
-  return /paused|pause/i.test(job.lastStatus ?? "");
+  return job.lifecycle === "paused" || /paused|pause/i.test(job.lastStatus ?? "");
 }
 
 function isEndedJob(job: CcrJob) {
-  return /ended_desynced|desync|ended/i.test(job.lastStatus ?? "");
+  return job.lifecycle === "desynced" || /ended_desynced|desync|ended/i.test(job.lastStatus ?? "");
+}
+
+function renderLifecycle(job: CcrJob) {
+  const map = {
+    running: ["green", "运行中"],
+    paused: ["orange", "已暂停"],
+    failed: ["red", "异常"],
+    deleted: ["default", "已删除"],
+    desynced: ["red", "已结束同步"],
+    unknown: ["default", "未知"]
+  } as const;
+  const [color, text] = map[job.lifecycle ?? "unknown"];
+  return <Tag color={color}>{text}</Tag>;
 }
 
 function renderJobStatus(value?: string) {
   if (!value) return "-";
-  if (/ended_desynced|desync|ended/i.test(value)) {
-    return <Tag color="red">已结束同步（不可恢复）</Tag>;
-  }
-  if (/paused|pause/i.test(value)) {
-    return <Tag color="orange">已暂停</Tag>;
-  }
-  if (/running|normal/i.test(value)) {
-    return <Tag color="green">运行中</Tag>;
-  }
-  return value;
+  if (/ended_desynced|desync|ended/i.test(value)) return <Tag color="red">已结束同步</Tag>;
+  if (/paused|pause/i.test(value)) return <Tag color="orange">已暂停</Tag>;
+  if (/running|normal/i.test(value)) return <Tag color="green">运行中</Tag>;
+  return <span className="status-text">{value}</span>;
 }
 
 function healthTag(value: Syncer["lastHealth"]) {
   const color = value === "healthy" ? "green" : value === "unhealthy" ? "red" : "default";
   const text = value === "healthy" ? "健康" : value === "unhealthy" ? "异常" : "未知";
   return <Tag color={color}>{text}</Tag>;
+}
+
+function checkTag(value: CheckStatus) {
+  if (value === "passed") return <Tag color="green">通过</Tag>;
+  if (value === "warning") return <Tag color="orange">警告</Tag>;
+  return <Tag color="red">失败</Tag>;
 }
 
 function formatDateTime(value: string) {

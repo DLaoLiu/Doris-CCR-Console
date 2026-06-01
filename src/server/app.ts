@@ -6,6 +6,9 @@ import path from "node:path";
 import type { AppConfig } from "./config.js";
 import { AppDatabase } from "./db.js";
 import { testClusterConnectivity } from "./connectivity.js";
+import { diagnoseMessage, inferLifecycle } from "./diagnostics.js";
+import { MySqlDorisInspector, type DorisInspector } from "./doris-inspector.js";
+import { runPreflight } from "./preflight.js";
 import { SyncerApiError, SyncerClient, stringifySyncerValue } from "./syncer-client.js";
 import type { CreateJobRequest, JobOperation } from "../shared/types.js";
 import { CCR_JOB_NAME_HELP, isValidCcrJobName } from "../shared/validation.js";
@@ -27,7 +30,7 @@ function requestMessage(error: unknown) {
   return String(error);
 }
 
-export function createApp(config: AppConfig, db = new AppDatabase(config), syncerClient = new SyncerClient()) {
+export function createApp(config: AppConfig, db = new AppDatabase(config), syncerClient = new SyncerClient(), inspector: DorisInspector = new MySqlDorisInspector()) {
   const app = Fastify({ logger: true });
   app.register(cors, { origin: true });
 
@@ -186,6 +189,15 @@ export function createApp(config: AppConfig, db = new AppDatabase(config), synce
     return { localJobs: db.listJobs().filter((job) => job.syncerId === syncer.id), remoteJobs: await syncerClient.listJobs(syncer) };
   });
 
+  app.post("/api/ccr/preflight", async (request) => {
+    const input = request.body as CreateJobRequest;
+    const report = await runPreflight(db, syncerClient, inspector, input);
+    const failedCount = report.checks.filter((item) => item.status === "failed").length;
+    const warningCount = report.checks.filter((item) => item.status === "warning").length;
+    db.addLog("preflight", report.ok, `预检完成：${failedCount} 个失败，${warningCount} 个警告`, input.name);
+    return report;
+  });
+
   app.post("/api/ccr/jobs", async (request, reply) => {
     const input = request.body as CreateJobRequest;
     const jobName = typeof input.name === "string" ? input.name : undefined;
@@ -203,8 +215,42 @@ export function createApp(config: AppConfig, db = new AppDatabase(config), synce
       return db.getJobByName(job.name) ?? job;
     } catch (error) {
       db.addLog("create", false, requestMessage(error), jobName);
+      if (jobName) {
+        db.replaceDiagnostics(jobName, diagnoseMessage(requestMessage(error), "创建任务"));
+      }
       throw error;
     }
+  });
+
+  app.get("/api/ccr/jobs/:name/detail", async (request) => {
+    const { name } = request.params as { name: string };
+    const job = db.getJobByName(name);
+    if (!job) throw new Error("任务不存在");
+    const metrics = db.listMetrics(name, 100);
+    return {
+      job,
+      metrics,
+      diagnostics: db.listDiagnostics(name),
+      logs: db.listLogs({ jobName: name }),
+      rawSnapshot: {
+        status: metrics[0]?.rawStatus,
+        lag: metrics[0]?.rawLag
+      }
+    };
+  });
+
+  app.get("/api/ccr/jobs/:name/metrics", async (request) => {
+    const { name } = request.params as { name: string };
+    const query = request.query as { limit?: string };
+    return db.listMetrics(name, Number(query.limit ?? 100));
+  });
+
+  app.post("/api/ccr/jobs/:name/refresh", async (request) => {
+    const { name } = request.params as { name: string };
+    const { syncer, job } = requireJobContext(db, name);
+    const result = await refreshJobSnapshot(db, syncerClient, syncer, job.name);
+    db.addLog("refresh", result.success, result.errorMessage ?? "状态和延迟已刷新", job.name);
+    return result;
   });
 
   app.get("/api/ccr/jobs/:name/status", async (request) => {
@@ -213,11 +259,16 @@ export function createApp(config: AppConfig, db = new AppDatabase(config), synce
       const { syncer, job } = requireJobContext(db, name);
       const status = await syncerClient.jobStatus(syncer, job.name);
       const statusText = stringifySyncerValue(status);
-      db.updateJobStatus(job.name, { lastStatus: statusText });
+      db.updateJobSnapshot(job.name, { lastStatus: statusText, lifecycle: inferLifecycle(statusText), lastCheckedAt: new Date().toISOString() });
+      db.addMetric({ jobName: job.name, status: statusText, success: true, rawStatus: rawText(status) });
+      db.replaceDiagnostics(job.name, []);
       db.addLog("refresh_status", true, statusText, job.name);
       return { status: statusText };
     } catch (error) {
       db.addLog("refresh_status", false, requestMessage(error), name);
+      db.updateJobSnapshot(name, { lifecycle: "failed", lastError: requestMessage(error), lastCheckedAt: new Date().toISOString() });
+      db.addMetric({ jobName: name, success: false, errorMessage: requestMessage(error) });
+      db.replaceDiagnostics(name, diagnoseMessage(requestMessage(error), "刷新状态"));
       throw error;
     }
   });
@@ -228,11 +279,16 @@ export function createApp(config: AppConfig, db = new AppDatabase(config), synce
       const { syncer, job } = requireJobContext(db, name);
       const lag = await syncerClient.lag(syncer, job.name);
       const lagText = stringifySyncerValue(lag);
-      db.updateJobStatus(job.name, { lastLag: lagText });
+      db.updateJobSnapshot(job.name, { lastLag: lagText, lastCheckedAt: new Date().toISOString() });
+      db.addMetric({ jobName: job.name, lag: lagText, success: true, rawLag: rawText(lag) });
+      db.replaceDiagnostics(job.name, []);
       db.addLog("refresh_lag", true, lagText, job.name);
       return { lag: lagText };
     } catch (error) {
       db.addLog("refresh_lag", false, requestMessage(error), name);
+      db.updateJobSnapshot(name, { lifecycle: "failed", lastError: requestMessage(error), lastCheckedAt: new Date().toISOString() });
+      db.addMetric({ jobName: name, success: false, errorMessage: requestMessage(error) });
+      db.replaceDiagnostics(name, diagnoseMessage(requestMessage(error), "刷新延迟"));
       throw error;
     }
   });
@@ -247,7 +303,15 @@ export function createApp(config: AppConfig, db = new AppDatabase(config), synce
         if (action === "delete") {
           db.deleteJob(job.name);
         } else if (nextStatus) {
-          db.updateJobStatus(job.name, { lastStatus: nextStatus });
+          const lifecycle = action === "desync" ? "desynced" : inferLifecycle(nextStatus);
+          db.updateJobSnapshot(job.name, { lastStatus: nextStatus, lifecycle, lastCheckedAt: new Date().toISOString() });
+          db.addMetric({ jobName: job.name, status: nextStatus, success: true, rawStatus: nextStatus });
+          if (action !== "desync") {
+            const refreshResult = await refreshJobSnapshot(db, syncerClient, syncer, job.name);
+            if (!refreshResult.success) {
+              db.addLog("refresh", false, `操作已发送，但远端状态未确认：${refreshResult.errorMessage}`, job.name);
+            }
+          }
         }
         db.addLog(action as JobOperation, true, nextStatus ?? `${action} 成功`, job.name);
         return { ok: true };
@@ -292,24 +356,51 @@ function actionStatus(action: "pause" | "resume" | "delete" | "desync") {
   return undefined;
 }
 
+function rawText(value: unknown) {
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 async function refreshJobSnapshot(db: AppDatabase, syncerClient: SyncerClient, syncer: NonNullable<ReturnType<AppDatabase["getSyncer"]>>, jobName: string) {
+  let statusText: string | undefined;
+  let lagText: string | undefined;
+  let rawStatus: string | undefined;
+  let rawLag: string | undefined;
+  const errors: string[] = [];
+
   try {
     const status = await syncerClient.jobStatus(syncer, jobName);
-    const statusText = stringifySyncerValue(status);
-    db.updateJobStatus(jobName, { lastStatus: statusText });
+    statusText = stringifySyncerValue(status);
+    rawStatus = rawText(status);
     db.addLog("refresh_status", true, statusText, jobName);
   } catch (error) {
-    db.addLog("refresh_status", false, requestMessage(error), jobName);
+    const message = requestMessage(error);
+    errors.push(message);
+    db.addLog("refresh_status", false, message, jobName);
   }
 
   try {
     const lag = await syncerClient.lag(syncer, jobName);
-    const lagText = stringifySyncerValue(lag);
-    db.updateJobStatus(jobName, { lastLag: lagText });
+    lagText = stringifySyncerValue(lag);
+    rawLag = rawText(lag);
     db.addLog("refresh_lag", true, lagText, jobName);
   } catch (error) {
-    db.addLog("refresh_lag", false, requestMessage(error), jobName);
+    const message = requestMessage(error);
+    errors.push(message);
+    db.addLog("refresh_lag", false, message, jobName);
   }
+
+  const errorMessage = errors.join("；") || undefined;
+  const success = errors.length === 0;
+  db.updateJobSnapshot(jobName, {
+    lastStatus: statusText,
+    lastLag: lagText,
+    lifecycle: inferLifecycle(statusText, errorMessage),
+    lastError: errorMessage,
+    lastCheckedAt: new Date().toISOString()
+  });
+  db.addMetric({ jobName, status: statusText, lag: lagText, success, errorMessage, rawStatus, rawLag });
+  db.replaceDiagnostics(jobName, errorMessage ? diagnoseMessage(errorMessage, "刷新任务") : []);
+  return { success, status: statusText, lag: lagText, errorMessage, diagnostics: db.listDiagnostics(jobName) };
 }
 
 function requireJobContext(db: AppDatabase, name: string) {

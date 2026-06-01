@@ -64,4 +64,24 @@ describe("AppDatabase", () => {
     expect(db.listLogs({ jobName: "job1" })[0].message).toBe("created");
     db.close();
   });
+
+  it("keeps job metric history and diagnostics", () => {
+    const db = createDb();
+    db.addMetric({ jobName: "job1", status: "running", lag: "279", success: true, rawStatus: "{\"status\":\"running\"}", rawLag: "{\"lag\":279}" });
+    db.addMetric({ jobName: "job1", status: "running", lag: "0", success: true, rawStatus: "{\"status\":\"running\"}", rawLag: "{\"lag\":0}" });
+    db.replaceDiagnostics("job1", [
+      {
+        severity: "error",
+        title: "FE 未启用 CCR Binlog",
+        summary: "binlog disabled",
+        suggestion: "enable binlog",
+        retryable: true,
+        source: "enable_feature_binlog=false"
+      }
+    ]);
+
+    expect(db.listMetrics("job1").map((metric) => metric.lag)).toEqual(["0", "279"]);
+    expect(db.listDiagnostics("job1")[0]).toMatchObject({ title: "FE 未启用 CCR Binlog", retryable: true });
+    db.close();
+  });
 });

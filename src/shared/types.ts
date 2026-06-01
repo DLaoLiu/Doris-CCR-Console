@@ -1,11 +1,16 @@
 export type ClusterRole = "source" | "target";
 export type CcrSyncType = "database" | "table";
+export type JobLifecycle = "unknown" | "running" | "paused" | "failed" | "deleted" | "desynced";
+export type CheckStatus = "passed" | "warning" | "failed";
+export type DiagnosticSeverity = "info" | "warning" | "error";
 export type JobOperation =
   | "create"
   | "pause"
   | "resume"
   | "delete"
   | "desync"
+  | "preflight"
+  | "refresh"
   | "refresh_status"
   | "refresh_lag"
   | "test_cluster"
@@ -48,6 +53,9 @@ export interface CcrJob {
   targetTable?: string;
   lastStatus?: string;
   lastLag?: string;
+  lifecycle: JobLifecycle;
+  lastError?: string;
+  lastCheckedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,4 +89,55 @@ export interface CreateJobRequest {
   sourceTable?: string;
   targetDatabase: string;
   targetTable?: string;
+}
+
+export interface PreflightCheck {
+  key: string;
+  label: string;
+  status: CheckStatus;
+  message: string;
+  suggestion?: string;
+}
+
+export interface PreflightReport {
+  ok: boolean;
+  canContinue: boolean;
+  checkedAt: string;
+  checks: PreflightCheck[];
+  diagnostics: JobDiagnostic[];
+}
+
+export interface JobMetric {
+  id: number;
+  jobName: string;
+  status?: string;
+  lag?: string;
+  success: boolean;
+  errorMessage?: string;
+  rawStatus?: string;
+  rawLag?: string;
+  createdAt: string;
+}
+
+export interface JobDiagnostic {
+  id?: number;
+  jobName?: string;
+  severity: DiagnosticSeverity;
+  title: string;
+  summary: string;
+  suggestion: string;
+  retryable: boolean;
+  source?: string;
+  createdAt?: string;
+}
+
+export interface JobDetail {
+  job: CcrJob;
+  metrics: JobMetric[];
+  diagnostics: JobDiagnostic[];
+  logs: OperationLog[];
+  rawSnapshot?: {
+    status?: string;
+    lag?: string;
+  };
 }
