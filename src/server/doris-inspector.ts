@@ -1,5 +1,5 @@
 import mysql from "mysql2/promise";
-import type { Cluster } from "../shared/types.js";
+import type { Cluster, DorisDatabaseMetadata, DorisTableMetadata } from "../shared/types.js";
 
 export interface DorisObjectCheck {
   connected: boolean;
@@ -12,6 +12,8 @@ export interface DorisObjectCheck {
 
 export interface DorisInspector {
   inspectObject(cluster: Cluster, database: string, table?: string): Promise<DorisObjectCheck>;
+  listDatabases(cluster: Cluster): Promise<DorisDatabaseMetadata[]>;
+  listTables(cluster: Cluster, database: string): Promise<DorisTableMetadata[]>;
 }
 
 function quoteIdentifier(value: string) {
@@ -24,18 +26,57 @@ function readShowCreate(row: Record<string, unknown>) {
 }
 
 export class MySqlDorisInspector implements DorisInspector {
+  private async connect(cluster: Cluster) {
+    return mysql.createConnection({
+      host: cluster.host,
+      port: cluster.queryPort,
+      user: cluster.user,
+      password: cluster.password ?? "",
+      connectTimeout: 5000
+    });
+  }
+
+  async listDatabases(cluster: Cluster): Promise<DorisDatabaseMetadata[]> {
+    let connection: mysql.Connection | undefined;
+    try {
+      connection = await this.connect(cluster);
+      const [rows] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT s.SCHEMA_NAME AS name, COUNT(t.TABLE_NAME) AS table_count
+         FROM information_schema.SCHEMATA s
+         LEFT JOIN information_schema.TABLES t ON t.TABLE_SCHEMA = s.SCHEMA_NAME
+         WHERE s.SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys', '__internal_schema')
+         GROUP BY s.SCHEMA_NAME
+         ORDER BY s.SCHEMA_NAME`
+      );
+      return rows.map((row) => ({ name: String(row.name), tableCount: Number(row.table_count ?? 0) }));
+    } finally {
+      await connection?.end().catch(() => undefined);
+    }
+  }
+
+  async listTables(cluster: Cluster, database: string): Promise<DorisTableMetadata[]> {
+    let connection: mysql.Connection | undefined;
+    try {
+      connection = await this.connect(cluster);
+      const [rows] = await connection.query<mysql.RowDataPacket[]>(
+        `SELECT TABLE_NAME AS name, TABLE_TYPE AS type
+         FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = ?
+         ORDER BY TABLE_NAME`,
+        [database]
+      );
+      return rows.map((row) => ({ name: String(row.name), type: row.type ? String(row.type) : undefined }));
+    } finally {
+      await connection?.end().catch(() => undefined);
+    }
+  }
+
   async inspectObject(cluster: Cluster, database: string, table?: string): Promise<DorisObjectCheck> {
     let connection: mysql.Connection | undefined;
     try {
-      connection = await mysql.createConnection({
-        host: cluster.host,
-        port: cluster.queryPort,
-        user: cluster.user,
-        password: cluster.password ?? "",
-        connectTimeout: 5000
-      });
+      connection = await this.connect(cluster);
 
-      const [databaseRows] = await connection.execute<mysql.RowDataPacket[]>(
+      const [databaseRows] = await connection.query<mysql.RowDataPacket[]>(
         "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?",
         [database]
       );
@@ -44,7 +85,7 @@ export class MySqlDorisInspector implements DorisInspector {
         return { connected: true, databaseExists, message: databaseExists ? "数据库存在" : "数据库不存在" };
       }
 
-      const [tableRows] = await connection.execute<mysql.RowDataPacket[]>(
+      const [tableRows] = await connection.query<mysql.RowDataPacket[]>(
         "SELECT TABLE_NAME, TABLE_TYPE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?",
         [database, table]
       );

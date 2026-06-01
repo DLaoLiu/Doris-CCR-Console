@@ -141,3 +141,18 @@ export interface JobDetail {
     lag?: string;
   };
 }
+
+export interface DorisDatabaseMetadata {
+  name: string;
+  tableCount: number;
+}
+
+export interface DorisTableMetadata {
+  name: string;
+  type?: string;
+}
+
+export interface DorisMetadataResponse<T> {
+  clusterId: number;
+  items: T[];
+}

@@ -1,4 +1,17 @@
-import type { CcrJob, Cluster, CreateJobRequest, JobDetail, JobMetric, JobOperation, OperationLog, PreflightReport, Syncer } from "../shared/types";
+import type {
+  CcrJob,
+  Cluster,
+  CreateJobRequest,
+  DorisDatabaseMetadata,
+  DorisMetadataResponse,
+  DorisTableMetadata,
+  JobDetail,
+  JobMetric,
+  JobOperation,
+  OperationLog,
+  PreflightReport,
+  Syncer
+} from "../shared/types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
@@ -35,6 +48,8 @@ export const api = {
   testCluster: (id: number) => request<{ ok: boolean; results: Array<{ port: number; ok: boolean; message: string }> }>(`/api/clusters/${id}/test`, { method: "POST" }),
   testClusterDraft: (input: Partial<Cluster>) =>
     request<{ ok: boolean; results: Array<{ port: number; ok: boolean; message: string }> }>("/api/clusters/test", { method: "POST", body: JSON.stringify(input) }),
+  listClusterDatabases: (id: number) => request<DorisMetadataResponse<DorisDatabaseMetadata>>(`/api/clusters/${id}/databases`),
+  listClusterTables: (id: number, database: string) => request<DorisMetadataResponse<DorisTableMetadata>>(`/api/clusters/${id}/tables?database=${encodeURIComponent(database)}`),
   listSyncers: () => request<Syncer[]>("/api/syncers"),
   createSyncer: (input: Partial<Syncer>) => request<Syncer>("/api/syncers", { method: "POST", body: JSON.stringify(input) }),
   updateSyncer: (id: number, input: Partial<Syncer>) => request<Syncer>(`/api/syncers/${id}`, { method: "PUT", body: JSON.stringify(input) }),

@@ -1,6 +1,7 @@
 import {
   Alert,
   App as AntApp,
+  AutoComplete,
   Button,
   Descriptions,
   Drawer,
@@ -34,7 +35,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
 import logoUrl from "./assets/ccr-logo-app.png";
-import type { CcrJob, CheckStatus, Cluster, CreateJobRequest, JobDetail, JobDiagnostic, JobMetric, JobOperation, OperationLog, PreflightReport, Syncer } from "../shared/types";
+import type { CcrJob, CheckStatus, Cluster, CreateJobRequest, DorisDatabaseMetadata, DorisTableMetadata, JobDetail, JobDiagnostic, JobMetric, JobOperation, OperationLog, PreflightReport, Syncer } from "../shared/types";
 import { CCR_JOB_NAME_HELP, CCR_JOB_NAME_PATTERN } from "../shared/validation";
 
 type PageKey = "dashboard" | "clusters" | "syncers" | "jobs" | "logs";
@@ -212,6 +213,8 @@ export default function App() {
           targets={targetOptions}
           onCancel={() => setJobModalOpen(false)}
           onPreflight={api.preflightJob}
+          onListDatabases={api.listClusterDatabases}
+          onListTables={api.listClusterTables}
           onSubmit={(values) => run(() => api.createJob(values), "CCR 任务已创建").then(() => setJobModalOpen(false))}
         />
       </Modal>
@@ -566,7 +569,9 @@ function JobForm({
   targets,
   onSubmit,
   onCancel,
-  onPreflight
+  onPreflight,
+  onListDatabases,
+  onListTables
 }: {
   syncers: Array<{ value: number; label: string }>;
   sources: Array<{ value: number; label: string }>;
@@ -574,12 +579,87 @@ function JobForm({
   onSubmit: (values: CreateJobRequest) => Promise<void>;
   onCancel: () => void;
   onPreflight: (values: CreateJobRequest) => Promise<PreflightReport>;
+  onListDatabases: (clusterId: number) => Promise<{ items: DorisDatabaseMetadata[] }>;
+  onListTables: (clusterId: number, database: string) => Promise<{ items: DorisTableMetadata[] }>;
 }) {
   const { message, modal } = AntApp.useApp();
   const [form] = Form.useForm<CreateJobRequest>();
   const syncType = Form.useWatch("syncType", form);
+  const sourceClusterId = Form.useWatch("sourceClusterId", form);
+  const targetClusterId = Form.useWatch("targetClusterId", form);
+  const sourceDatabase = Form.useWatch("sourceDatabase", form);
+  const targetDatabase = Form.useWatch("targetDatabase", form);
+  const targetTable = Form.useWatch("targetTable", form);
   const [report, setReport] = useState<PreflightReport>();
   const [preflighting, setPreflighting] = useState(false);
+  const [sourceDatabases, setSourceDatabases] = useState<Array<{ value: string; label: string }>>([]);
+  const [targetDatabases, setTargetDatabases] = useState<Array<{ value: string; label: string }>>([]);
+  const [sourceTables, setSourceTables] = useState<Array<{ value: string; label: string }>>([]);
+  const [targetTables, setTargetTables] = useState<Array<{ value: string; label: string }>>([]);
+  const [metadataLoading, setMetadataLoading] = useState<string>();
+
+  const loadDatabases = async (kind: "source" | "target", clusterId?: number) => {
+    if (!clusterId) return;
+    setMetadataLoading(`${kind}-databases`);
+    try {
+      const result = await onListDatabases(clusterId);
+      const options = result.items.map((item) => ({ value: item.name, label: `${item.name} (${item.tableCount})` }));
+      if (kind === "source") setSourceDatabases(options);
+      else setTargetDatabases(options);
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : "库元数据拉取失败，可继续手动输入");
+    } finally {
+      setMetadataLoading(undefined);
+    }
+  };
+
+  const loadTables = async (kind: "source" | "target", clusterId?: number, database?: string) => {
+    if (!clusterId || !database?.trim()) return;
+    setMetadataLoading(`${kind}-tables`);
+    try {
+      const result = await onListTables(clusterId, database.trim());
+      const options = result.items.map((item) => ({ value: item.name, label: item.type ? `${item.name} · ${item.type}` : item.name }));
+      if (kind === "source") setSourceTables(options);
+      else setTargetTables(options);
+    } catch (error) {
+      message.warning(error instanceof Error ? error.message : "表元数据拉取失败，可继续手动输入");
+    } finally {
+      setMetadataLoading(undefined);
+    }
+  };
+
+  useEffect(() => {
+    setSourceDatabases([]);
+    setSourceTables([]);
+    form.setFieldsValue({ sourceDatabase: undefined, sourceTable: undefined });
+    void loadDatabases("source", sourceClusterId);
+  }, [sourceClusterId]);
+
+  useEffect(() => {
+    setTargetDatabases([]);
+    setTargetTables([]);
+    form.setFieldsValue({ targetDatabase: undefined, targetTable: undefined });
+    void loadDatabases("target", targetClusterId);
+  }, [targetClusterId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSourceTables([]);
+      form.setFieldsValue({ sourceTable: undefined });
+      void loadTables("source", sourceClusterId, sourceDatabase);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [sourceClusterId, sourceDatabase]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setTargetTables([]);
+      void loadTables("target", targetClusterId, targetDatabase);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [targetClusterId, targetDatabase]);
+
+  const targetTableExists = Boolean(targetTable && targetTables.some((item) => item.value === targetTable));
 
   const runPreflight = async () => {
     const values = await form.validateFields();
@@ -642,21 +722,40 @@ function JobForm({
           </Form.Item>
           <Space.Compact block>
             <Form.Item name="sourceDatabase" label="源库" rules={[{ required: true }]} style={{ width: "50%" }}>
-              <Input />
+              <AutoComplete
+                options={sourceDatabases}
+                placeholder={metadataLoading === "source-databases" ? "正在拉取源库..." : "选择或输入源库"}
+                filterOption={(input, option) => String(option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+              />
             </Form.Item>
             <Form.Item name="targetDatabase" label="目标库" rules={[{ required: true }]} style={{ width: "50%" }}>
-              <Input />
+              <AutoComplete
+                options={targetDatabases}
+                placeholder={metadataLoading === "target-databases" ? "正在拉取目标库..." : "选择或输入目标库"}
+                filterOption={(input, option) => String(option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+              />
             </Form.Item>
           </Space.Compact>
           {syncType === "table" && (
-            <Space.Compact block>
-              <Form.Item name="sourceTable" label="源表" rules={[{ required: true }]} style={{ width: "50%" }}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="targetTable" label="目标表" rules={[{ required: true }]} style={{ width: "50%" }}>
-                <Input />
-              </Form.Item>
-            </Space.Compact>
+            <>
+              <Space.Compact block>
+                <Form.Item name="sourceTable" label="源表" rules={[{ required: true }]} style={{ width: "50%" }}>
+                  <AutoComplete
+                    options={sourceTables}
+                    placeholder={metadataLoading === "source-tables" ? "正在拉取源表..." : "选择或输入源表"}
+                    filterOption={(input, option) => String(option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+                  />
+                </Form.Item>
+                <Form.Item name="targetTable" label="目标表" rules={[{ required: true }]} style={{ width: "50%" }}>
+                  <AutoComplete
+                    options={targetTables}
+                    placeholder={metadataLoading === "target-tables" ? "正在拉取目标表..." : "输入一个不存在的目标表名"}
+                    filterOption={(input, option) => String(option?.value ?? "").toLowerCase().includes(input.toLowerCase())}
+                  />
+                </Form.Item>
+              </Space.Compact>
+              {targetTableExists && <Alert className="metadata-warning" type="warning" showIcon message="目标表已存在，表级 CCR 创建时通常需要填写一个不存在的目标表名。" />}
+            </>
           )}
         </div>
         <div className="job-form-preflight">

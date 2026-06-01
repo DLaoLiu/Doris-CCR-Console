@@ -181,7 +181,9 @@ describe("CCR job API logging", () => {
       version: async () => ({ version: "2.1.0" })
     } as unknown as SyncerClient;
     const fakeInspector: DorisInspector = {
-      inspectObject: async (cluster) => ({ connected: true, databaseExists: true, tableExists: cluster.role === "source", binlogEnabled: cluster.role === "source" ? undefined : undefined })
+      inspectObject: async (cluster) => ({ connected: true, databaseExists: true, tableExists: cluster.role === "source", binlogEnabled: cluster.role === "source" ? undefined : undefined }),
+      listDatabases: async () => [{ name: "src", tableCount: 1 }],
+      listTables: async () => [{ name: "tbl" }]
     };
     const app = createApp(config, db, fakeSyncerClient, fakeInspector);
 
@@ -225,7 +227,9 @@ describe("CCR job API logging", () => {
         databaseExists: true,
         tableExists: cluster.role === "source",
         binlogEnabled: cluster.role === "source" ? true : undefined
-      })
+      }),
+      listDatabases: async () => [{ name: "src", tableCount: 1 }],
+      listTables: async () => [{ name: "bfi_imsi" }]
     };
     const app = createApp(config, db, fakeSyncerClient, fakeInspector);
 
@@ -251,6 +255,33 @@ describe("CCR job API logging", () => {
     expect(checks.find((item) => item.key === "target_table_absent")).toMatchObject({ status: "passed" });
     await app.close();
     await new Promise<void>((resolve) => portServer.close(() => resolve()));
+  });
+
+  it("lists Doris databases and tables for a configured cluster", async () => {
+    const config = createConfig();
+    const db = new AppDatabase(config);
+    const source = db.createCluster({ name: "source", role: "source", host: "127.0.0.1", queryPort: 9030, thriftPort: 9020, user: "root", password: "" })!;
+    const fakeInspector: DorisInspector = {
+      inspectObject: async () => ({ connected: true, databaseExists: true }),
+      listDatabases: async () => [
+        { name: "bfi_v1", tableCount: 2 },
+        { name: "bfi_v2", tableCount: 1 }
+      ],
+      listTables: async () => [
+        { name: "bfi_imsi", type: "BASE TABLE" },
+        { name: "bfi_wifi", type: "BASE TABLE" }
+      ]
+    };
+    const app = createApp(config, db, {} as SyncerClient, fakeInspector);
+
+    const databases = await app.inject({ method: "GET", url: `/api/clusters/${source.id}/databases` });
+    const tables = await app.inject({ method: "GET", url: `/api/clusters/${source.id}/tables?database=bfi_v1` });
+
+    expect(databases.statusCode).toBe(200);
+    expect(databases.json().items).toEqual([{ name: "bfi_v1", tableCount: 2 }, { name: "bfi_v2", tableCount: 1 }]);
+    expect(tables.statusCode).toBe(200);
+    expect(tables.json().items[0]).toMatchObject({ name: "bfi_imsi", type: "BASE TABLE" });
+    await app.close();
   });
 
   it("stores refresh metrics history and returns job detail", async () => {

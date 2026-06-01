@@ -116,6 +116,28 @@ export function createApp(config: AppConfig, db = new AppDatabase(config), synce
     db.addLog("test_cluster", result.ok, result.results.map((item) => item.message).join("；"));
     return result;
   });
+  app.get("/api/clusters/:id/databases", async (request) => {
+    const { id } = request.params as { id: string };
+    const cluster = db.getCluster(Number(id), true);
+    if (!cluster) throw new Error("集群不存在");
+    try {
+      return { clusterId: cluster.id, items: await inspector.listDatabases(cluster) };
+    } catch (error) {
+      throw new Error(`拉取数据库元数据失败：${requestMessage(error)}`);
+    }
+  });
+  app.get("/api/clusters/:id/tables", async (request) => {
+    const { id } = request.params as { id: string };
+    const query = request.query as { database?: string };
+    const database = requireString(query.database, "数据库");
+    const cluster = db.getCluster(Number(id), true);
+    if (!cluster) throw new Error("集群不存在");
+    try {
+      return { clusterId: cluster.id, items: await inspector.listTables(cluster, database) };
+    } catch (error) {
+      throw new Error(`拉取数据表元数据失败：${requestMessage(error)}`);
+    }
+  });
 
   app.get("/api/syncers", async () => db.listSyncers());
   app.post("/api/syncers", async (request, reply) => {
