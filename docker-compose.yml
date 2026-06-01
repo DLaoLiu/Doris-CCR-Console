@@ -1,0 +1,18 @@
+services:
+  doris-ccr-console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: doris-ccr-console:latest
+    container_name: doris-ccr-console
+    restart: unless-stopped
+    environment:
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-3100}
+      DATA_DIR: ${DATA_DIR:-/app/data}
+      DB_PATH: ${DB_PATH:-/app/data/ccr-console.db}
+      CCR_CONSOLE_SECRET: ${CCR_CONSOLE_SECRET:-}
+    ports:
+      - "${CCR_CONSOLE_PORT:-3100}:3100"
+    volumes:
+      - ./data:/app/data
